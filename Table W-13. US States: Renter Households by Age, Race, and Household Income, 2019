@@ -1,0 +1,139 @@
+# Load packages 
+library(tidyverse)
+library(data.table)
+library(openxlsx)
+library(tidyquant)
+library(dint)
+library(pracma) 
+
+setwd("C://Users//abbyy//OneDrive//Desktop//Research JCHC//")
+
+# Import the data 
+ACS_2019_hhplus <- fread("ACS_2019_hhplus.csv")
+
+# row 6: total number of households (in thousands) per age group
+
+age <- ACS_2019_hhplus %>% 
+  filter(tensimp == 2 & sporder == 1) %>%
+  mutate(age = case_when(agep < 25 ~ "1 Under 25",
+                         agep >= 25 & agep <=34 ~ "2 25-34",
+                         agep >= 35 & agep <=44 ~ "3 35-44",
+                         agep >= 45 & agep <=54 ~ "4 45-54",
+                         agep >= 55 & agep <=64 ~ "5 55-64",
+                         agep >= 65 & agep <=74 ~ "6 65-74",
+                         agep >= 75 ~ "7 75+")) %>% 
+  group_by(age) %>%
+  summarise(tot = sum(wgtp)/1000) %>%
+  pivot_wider(names_from = age, values_from = tot)
+
+# [NOTE: race categories were changed to include alaskan/american indians] row 6: total number of households (in thousands) per racial/ethnic group
+race <- ACS_2019_hhplus %>% 
+  filter(tensimp == 2 & sporder == 1) %>%
+  mutate(race6cat = case_when(rac1p == 1 & hisp == 1 ~ 1,
+                       rac1p == 2 & hisp == 1 ~ 2,
+                       hisp > 1 ~ 3,
+                       rac1p == 6 & hisp == 1 ~ 4,
+                       (rac1p == 3 | rac1p == 4 | rac1p == 5) ~ 5,
+                       (rac1p == 7 | rac1p == 8 | rac1p == 9) & hisp == 1 ~ 6),
+         race6cat = case_when(race6cat == 1 ~ "1 White",
+                              race6cat == 2 ~ "2 Black",
+                              race6cat == 3 ~ "3 Hispanic",
+                              race6cat == 4 ~ "4 Asian",
+                              race6cat == 5 ~ "5 American Indian/Alaskan Native",
+                              race6cat == 6 ~ "6 Multiracial or Another Race")) %>%
+  group_by(race6cat) %>%
+  summarise(tot = sum(wgtp)/1000) %>%
+  pivot_wider(names_from = race6cat, values_from = tot)
+
+# row 6: total number of households (in thousands) per income bracket
+income <- ACS_2019_hhplus %>% 
+  filter(tensimp == 2 & sporder == 1) %>%
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                       hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                       hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                       hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                       hincp >= 75000 ~ "5 $75,000 or More")) %>%
+  mutate_at(vars(c(hhincome)), list(~as.character(.))) %>% # ensures that the hhincome column is treated as a character rather than any other data type
+  bind_rows(mutate(., hhincome = "All Incomes")) %>% # creates a summary row where "6 All Households" represents a category encompassing all households
+  group_by(hhincome) %>%
+  summarise(tot = sum(wgtp)/1000) %>%
+  pivot_wider(names_from = hhincome, values_from = tot)
+ 
+# tab: state x age for renters (number of households in thousands)
+
+state_age <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>%
+  mutate(age = case_when(agep < 25 ~ "1 Under 25",
+                                  agep >= 25 & agep <=34 ~ "2 25-34",
+                                  agep >= 35 & agep <=44 ~ "3 35-44",
+                                  agep >= 45 & agep <=54 ~ "4 45-54",
+                                  agep >= 55 & agep <=64 ~ "5 55-64",
+                                  agep >= 65 & agep <=74 ~ "6 65-74",
+                                  agep >= 75 ~ "7 75+")) %>% 
+  group_by(age, st) %>%  
+  summarise(tot = sum(wgtp)/1000) %>%
+  pivot_wider(names_from="age", 
+              values_from = "tot") # makes dataframe 'wider'
+
+# tab: state x race for renters (number of households in thousands)
+
+state_race <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>%
+  mutate(race5cat = case_when(rac1p == 1 & hisp == 1 ~ 1,
+                              rac1p == 2 & hisp == 1 ~ 2,
+                              hisp > 1 ~ 3,
+                              rac1p == 6 & hisp == 1 ~ 4,
+                              (rac1p == 3 | rac1p == 4 | rac1p == 5) ~ 5,
+                              (rac1p == 7 | rac1p == 8 | rac1p == 9) & hisp == 1 ~ 6),
+         race5cat = case_when(race5cat == 1 ~ "1 White",
+                              race5cat == 2 ~ "2 Black",
+                              race5cat == 3 ~ "3 Hispanic",
+                              race5cat == 4 ~ "4 Asian",
+                              race5cat == 5 ~ "5 American Indian/Alaskan Native",
+                              race5cat == 6 ~ "6 Multiracial or Another Race")) %>%
+  group_by(race5cat, st) %>%
+  summarise(tot = sum(wgtp)/1000) %>%
+  pivot_wider(names_from="race5cat", 
+              values_from = "tot") # makes dataframe 'wider'
+
+# tab: state x income for renters (number of households in thousands)
+
+state_income <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>%
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More")) %>%
+  mutate_at(vars(c(hhincome)), list(~as.character(.))) %>% # ensures that the hhincome column is treated as a character rather than any other data type
+  bind_rows(mutate(., hhincome = "All Incomes")) %>% # creates a summary row where "6 All Households" represents a category encompassing all households
+  group_by(hhincome, st) %>%  
+  summarise(tot = sum(wgtp)/1000) %>%
+  pivot_wider(names_from="hhincome", 
+              values_from = "tot") # makes dataframe 'wider'
+
+# merge tables
+states_full_table = reduce(list(state_age, state_race, state_income), left_join, by = "st")
+states_full_table <- states_full_table %>%
+  select(-st)
+
+
+# excel
+title <- "Table W-13. US States: Renter Households by Age, Race, and Household Income, 2019"  
+sources <- "Sources: JCHS tabulation of US Census Bureau, 2019 American Community Survey 1-Year Estimates."
+
+#these commands load in the target workbook, tell the program where to paste each component, then writes the tables into the workbook
+wb <- loadWorkbook("excelExport2019appendix2.xlsx") #loads in an existing workbook with template pasted in to a sheet called "RenterCharacteristicsByIncome"
+
+writeData(wb, sheet = "W-13", x = age, 
+          startCol = 2, startRow = 7, colNames = FALSE)  
+writeData(wb, sheet = "W-13", x = race, 
+          startCol = 9, startRow = 7, colNames = FALSE)  
+writeData(wb, sheet = "W-13", x = income, 
+          startCol = 15, startRow = 7, colNames = FALSE)  
+
+writeData(wb, sheet = "W-2", x = states_full_table, 
+          startCol = 2, startRow = 8, colNames = FALSE)  
+
+saveWorkbook(wb, "excelExport2019appendix2.xlsx", overwrite=TRUE)
+
