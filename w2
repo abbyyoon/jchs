@@ -1,0 +1,435 @@
+
+# Load packages 
+library(tidyverse)
+library(data.table)
+library(openxlsx)
+library(tidyquant)
+library(dint)
+library(pracma) 
+ 
+setwd("C://Users//abbyy//OneDrive//Desktop//Research JCHC//")
+
+# Import the data 
+ACS_2019_hhplus <- fread("ACS_2019_hhplus.csv")
+
+# row 2: total number of households (in thousands) per income bracket
+
+income <- ACS_2019_hhplus %>% 
+  filter(tensimp == 2 & sporder == 1) %>%
+  mutate(hhincome = case_when(
+    hincp < 15000 ~ "1 Less than $15,000",
+    hincp >= 15000 & hincp <= 29999 ~ "2 $15,000-29,999",
+    hincp >= 30000 & hincp <= 44999 ~ "3 $30,000-44,999",
+    hincp >= 45000 & hincp <= 74999 ~ "4 $45,000-74,999",
+    hincp >= 75000 ~ "5 $75,000 or More")) %>%
+  mutate_at(vars(c(hhincome)), list(~as.character(.))) %>% # ensures that the hhincome column is treated as a character rather than any other data type
+  bind_rows(mutate(., hhincome = "6 All Households")) %>% # creates a summary row where "6 All Households" represents a category encompassing all households
+  group_by(hhincome) %>%
+  summarise(tot = sum(wgtp)/1000) %>%
+  pivot_wider(names_from = hhincome, values_from = tot)
+
+# row 2: total percentages of income bracket (you could also leave the template as is)
+
+incomeP <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More"),  
+         age = case_when(agep < 25 ~ "1 Under 25",
+                         agep >= 25 & agep <=34 ~ "2 25-34",
+                         agep >= 35 & agep <=44 ~ "3 35-44",
+                         agep >= 45 & agep <=54 ~ "4 45-54",
+                         agep >= 55 & agep <=64 ~ "5 55-64",
+                         agep >= 65 & agep <=74 ~ "6 65-74",
+                         agep >= 75 ~ "7 75+")) %>% # create age and income categories
+mutate_at(vars(c(hhincome)), list(~as.character(.))) %>% 
+  bind_rows(mutate(., hhincome = "6 All Households")) %>%
+  group_by(hhincome) %>%
+  summarise(tot = sum(wgtp)) %>%
+  mutate(percentage = sum(tot)/sum(tot)*100) %>%
+  select(-tot) %>%
+  pivot_wider(names_from = hhincome, values_from = percentage)
+
+# tab: age x income for renters (number of households in thousands)
+
+age_income <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>%
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More"), 
+         age = case_when(agep < 25 ~ "1 Under 25",
+                         agep >= 25 & agep <=34 ~ "2 25-34",
+                         agep >= 35 & agep <=44 ~ "3 35-44",
+                         agep >= 45 & agep <=54 ~ "4 45-54",
+                         agep >= 55 & agep <=64 ~ "5 55-64",
+                         agep >= 65 & agep <=74 ~ "6 65-74",
+                         agep >= 75 ~ "7 75+")) %>% 
+  group_by(hhincome, age) %>%  
+  summarise(tot = sum(wgtp)/1000) %>%
+  pivot_wider(names_from="hhincome", 
+              values_from = "tot") # makes dataframe 'wider'
+
+  # tab: age x income for renters (percentage)
+  
+  age_incomeP <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More"),  
+         age = case_when(agep < 25 ~ "1 Under 25",
+                         agep >= 25 & agep <=34 ~ "2 25-34",
+                         agep >= 35 & agep <=44 ~ "3 35-44",
+                         agep >= 45 & agep <=54 ~ "4 45-54",
+                         agep >= 55 & agep <=64 ~ "5 55-64",
+                         agep >= 65 & agep <=74 ~ "6 65-74",
+                         agep >= 75 ~ "7 75+")) %>% 
+  group_by(hhincome, age) %>% # helps with finding the share of households fulfilling a certain age & income bracket
+  summarise(tot = sum(wgtp)) %>% # to get total # of households, you get sum of the weights (each person is representative of a certain number of households here; 'survey weight')
+  mutate(percentage = tot/sum(tot)*100) %>%
+  select(-tot) %>%
+  pivot_wider(names_from="hhincome", 
+              values_from = "percentage") 
+  
+  # "total" column for age x income (percentage)
+ 
+   ageP <- ACS_2019_hhplus %>%  
+    filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+    mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                hincp >= 75000 ~ "5 $75,000 or More"),  
+           age = case_when(agep < 25 ~ "1 Under 25",
+                           agep >= 25 & agep <=34 ~ "2 25-34",
+                           agep >= 35 & agep <=44 ~ "3 35-44",
+                           agep >= 45 & agep <=54 ~ "4 45-54",
+                           agep >= 55 & agep <=64 ~ "5 55-64",
+                           agep >= 65 & agep <=74 ~ "6 65-74",
+                           agep >= 75 ~ "7 75+")) %>% # create age and income categories
+    group_by(age) %>% 
+    summarise(tot = sum(wgtp)) %>%  
+    mutate(percentage = tot/sum(tot)*100) %>%
+    select(-tot)
+  
+   # "total" column for age x income (number of households in thousands)
+   
+   age <- ACS_2019_hhplus %>%  
+    filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+    mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                hincp >= 75000 ~ "5 $75,000 or More"),  
+           age = case_when(agep < 25 ~ "1 Under 25",
+                           agep >= 25 & agep <=34 ~ "2 25-34",
+                           agep >= 35 & agep <=44 ~ "3 35-44",
+                           agep >= 45 & agep <=54 ~ "4 45-54",
+                           agep >= 55 & agep <=64 ~ "5 55-64",
+                           agep >= 65 & agep <=74 ~ "6 65-74",
+                           agep >= 75 ~ "7 75+")) %>% # create age and income categories
+    group_by(age) %>%  
+    summarise(tot = sum(wgtp)/1000) 
+  
+  # merge these tables
+   
+  age_income_fulltable <- reduce(list(age_income, age, age_incomeP, ageP), left_join, by = "age")
+  #list includes the tables you want to merge, left_join is specified in next argument, by is the common variable
+  
+  age_income_fulltable <- age_income_fulltable %>%  
+    select(-age)
+  
+  
+  
+# tab: race x income for renters
+  
+race_income <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than 15000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More"),
+         race5cat = case_when(rac1p == 1 & hisp == 1 ~ 1,
+                              rac1p == 2 & hisp == 1 ~ 2,
+                              hisp > 1 ~ 3,
+                              rac1p == 6 & hisp == 1 ~ 4,
+                              (rac1p == 3 | rac1p == 4 | rac1p == 5 | rac1p == 7 | rac1p == 8 | rac1p == 9) & hisp == 1 ~ 5),
+         race5cat = case_when(race5cat == 1 ~ "1 White",
+                              race5cat == 2 ~ "2 Black",
+                              race5cat == 3 ~ "3 Hispanic",
+                              race5cat == 4 ~ "4 Asian",
+                              race5cat == 5 ~ "5 Mult_Oth")) %>%
+  group_by(hhincome, race5cat) %>%  
+  summarise(tot = sum(wgtp)/1000) %>%  
+  pivot_wider(names_from="hhincome", 
+              values_from = "tot") 
+
+# tab: race x income for renters (percentage)
+
+  race_incomeP <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More"), # note: labels don't matter as much b/c you are using template la
+         race5cat = case_when(rac1p == 1 & hisp == 1 ~ 1,
+                              rac1p == 2 & hisp == 1 ~ 2,
+                              hisp > 1 ~ 3,
+                              rac1p == 6 & hisp == 1 ~ 4,
+                              (rac1p == 3 | rac1p == 4 | rac1p == 5 | rac1p == 7 | rac1p == 8 | rac1p == 9) & hisp == 1 ~ 5),
+         race5cat = case_when(race5cat == 1 ~ "1 White",
+                              race5cat == 2 ~ "2 Black",
+                              race5cat == 3 ~ "3 Hispanic",
+                              race5cat == 4 ~ "4 Asian",
+                              race5cat == 5 ~ "5 Mult_Oth")) %>%
+  group_by(hhincome, race5cat) %>%  
+  summarise(tot = sum(wgtp)) %>%  
+  mutate(percentage = tot/sum(tot)*100) %>%  
+  select(-tot) %>%
+  pivot_wider(names_from="hhincome", values_from = "percentage") 
+  
+  # "total" column - age x income (percentage)
+  
+  raceP <- ACS_2019_hhplus %>%  
+    filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+    mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                hincp >= 75000 ~ "5 $75,000 or More"),  
+           race5cat = case_when(rac1p == 1 & hisp == 1 ~ 1,
+                                rac1p == 2 & hisp == 1 ~ 2,
+                                hisp > 1 ~ 3,
+                                rac1p == 6 & hisp == 1 ~ 4,
+                                (rac1p == 3 | rac1p == 4 | rac1p == 5 | rac1p == 7 | rac1p == 8 | rac1p == 9) & hisp == 1 ~ 5),
+           race5cat = case_when(race5cat == 1 ~ "1 White",
+                                race5cat == 2 ~ "2 Black",
+                                race5cat == 3 ~ "3 Hispanic",
+                                race5cat == 4 ~ "4 Asian",
+                                race5cat == 5 ~ "5 Mult_Oth")) %>%
+    group_by(race5cat) %>%  
+    summarise(tot = sum(wgtp)) %>%  
+    mutate(percentage = tot/sum(tot)*100) %>%
+    select(-tot)
+  
+  # "total" column - age x income (number of households in thousands)
+
+  race <- ACS_2019_hhplus %>%  
+    filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+    mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                hincp >= 75000 ~ "5 $75,000 or More"),  
+           race5cat = case_when(rac1p == 1 & hisp == 1 ~ 1,
+                                rac1p == 2 & hisp == 1 ~ 2,
+                                hisp > 1 ~ 3,
+                                rac1p == 6 & hisp == 1 ~ 4,
+                                (rac1p == 3 | rac1p == 4 | rac1p == 5 | rac1p == 7 | rac1p == 8 | rac1p == 9) & hisp == 1 ~ 5),
+           race5cat = case_when(race5cat == 1 ~ "1 White",
+                                race5cat == 2 ~ "2 Black",
+                                race5cat == 3 ~ "3 Hispanic",
+                                race5cat == 4 ~ "4 Asian",
+                                race5cat == 5 ~ "5 Mult_Oth")) %>%
+    group_by(race5cat) %>%
+    summarise(tot = sum(wgtp)/1000) 
+  
+  # merge these tables
+  race_income_fulltable <- reduce(list(race_income, race, race_incomeP, raceP), left_join, by = "race5cat")
+  #list includes the tables you want to merge, left_join is specified in next argument, by is the common variable
+  
+  race_income_fulltable <- race_income_fulltable %>%  
+    select(-race5cat)
+  
+  
+  
+  
+# tab: household type x income for renters 
+  
+householdtype_income <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>%  
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than 15000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More")) %>% 
+  mutate(householdtype = case_when(hhtype == 1 ~ "1 Married, no Children",
+                                   hhtype == 2 ~ "2 Married with Children",
+                                   hhtype == 3 ~ "3 Single Parent",
+                                   hhtype == 4 ~ "4 Other Family",
+                                   hhtype == 5 ~ "5 Single Person",
+                                   hhtype == 6 ~ "6 Other non-family")) %>%
+  group_by(hhincome, householdtype) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  pivot_wider(names_from="hhincome", 
+              values_from = "tot") 
+
+  # tab: household type x income for renters (percentage)
+
+  householdtype_incomeP <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than 15000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More")) %>% # create income categories
+  mutate(householdtype = case_when(hhtype == 1 ~ "1 Married, no Children",
+                                   hhtype == 2 ~ "2 Married with Children",
+                                   hhtype == 3 ~ "3 Single Parent",
+                                   hhtype == 4 ~ "4 Other Family",
+                                   hhtype == 5 ~ "5 Single Person",
+                                   hhtype == 6 ~ "6 Other non-family")) %>%
+  group_by(hhincome, householdtype) %>%  
+  summarise(tot = sum(wgtp)) %>%  
+  mutate(percentage = tot/sum(tot)*100) %>%  
+  select(-tot) %>%
+  pivot_wider(names_from="hhincome", 
+              values_from = "percentage")  
+  
+  # "total" column - household type x income (percentage)
+  
+  householdtypeP <- ACS_2019_hhplus %>%  
+    filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+    mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                hincp >= 75000 ~ "5 $75,000 or More"), 
+           householdtype = case_when(hhtype == 1 ~ "1 Married, no Children",
+                                     hhtype == 2 ~ "2 Married with Children",
+                                     hhtype == 3 ~ "3 Single Parent",
+                                     hhtype == 4 ~ "4 Other Family",
+                                     hhtype == 5 ~ "5 Single Person",
+                                     hhtype == 6 ~ "6 Other non-family")) %>%
+             group_by(householdtype) %>% 
+    summarise(tot = sum(wgtp)) %>%  
+    mutate(percentage = tot/sum(tot)*100) %>%
+    select(-tot)
+  
+  # "total" column - hosuehold type x income (number of households in thousands)
+  
+  householdtype <- ACS_2019_hhplus %>%  
+    filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+    mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                hincp >= 75000 ~ "5 $75,000 or More"), 
+           householdtype = case_when(hhtype == 1 ~ "1 Married, no Children",
+                                     hhtype == 2 ~ "2 Married with Children",
+                                     hhtype == 3 ~ "3 Single Parent",
+                                     hhtype == 4 ~ "4 Other Family",
+                                     hhtype == 5 ~ "5 Single Person",
+                                     hhtype == 6 ~ "6 Other non-family")) %>%
+    group_by(householdtype) %>%  
+    summarise(tot = sum(wgtp)/1000) 
+  
+  # merge these tables
+  householdtype_income_fulltable <- reduce(list(householdtype_income, householdtype, householdtype_incomeP, householdtypeP), left_join, by = "householdtype")
+  #list includes the tables you want to merge, left_join is specified in next argument, by is the common variable
+  
+  householdtype_income_fulltable <- householdtype_income_fulltable %>%  
+    select(-householdtype)
+  
+  
+  
+
+# tab: nativity x income for renters
+  
+nativity_income <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than 15000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More")) %>% # create income categories
+  mutate(nativity = case_when(nativity == 1 ~ "1 Native born",
+                              nativity == 2 ~ "2 Foreign born")) %>%
+  group_by(hhincome, nativity) %>%
+  summarise(tot = sum(wgtp)/1000) %>%  
+  pivot_wider(names_from="hhincome", values_from = "tot")  
+
+  # tab: nativity x income for renters (percentage)
+
+  nativity_incomeP <- ACS_2019_hhplus %>%  
+  filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+  mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than 15000",
+                              hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                              hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                              hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                              hincp >= 75000 ~ "5 $75,000 or More")) %>% # create income categories
+  mutate(nativity = case_when(nativity == 1 ~ "1 Native born",
+                              nativity == 2 ~ "2 Foreign born")) %>%
+  group_by(hhincome, nativity) %>% 
+  summarise(tot = sum(wgtp)) %>%  
+  mutate(percentage = tot/sum(tot)*100) %>%  
+  select(-tot) %>%
+  pivot_wider(names_from="hhincome", 
+              values_from = "percentage")  
+  
+  # "total" column - householdtype x income (percentage)
+  
+  nativityP <- ACS_2019_hhplus %>%  
+    filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+    mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                hincp >= 75000 ~ "5 $75,000 or More"), 
+           nativity = case_when(nativity == 1 ~ "1 Native born",
+                                nativity == 2 ~ "2 Foreign born")) %>%
+    group_by(nativity) %>%  
+    summarise(tot = sum(wgtp)) %>%  
+    mutate(percentage = tot/sum(tot)*100) %>%
+    select(-tot)
+  
+  # "total" column - age x income (number of households in thousands)
+  nativity <- ACS_2019_hhplus %>%  
+    filter(tensimp==2 & sporder==1) %>% #tensimp is tenure, 2 selects renters, sporder is hh head, use these filters for all tabs
+    mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                hincp >= 75000 ~ "5 $75,000 or More"), 
+           nativity = case_when(nativity == 1 ~ "1 Native born",
+                                nativity == 2 ~ "2 Foreign born")) %>%
+    group_by(nativity) %>%  
+    summarise(tot = sum(wgtp)/1000) 
+  
+  # merge these tables
+  nativity_income_fulltable <- reduce(list(nativity_income, nativity, nativity_incomeP, nativityP), left_join, by = "nativity")
+  #list includes the tables you want to merge, left_join is specified in next argument, by is the common variable
+  
+  nativity_income_fulltable <- nativity_income_fulltable %>%  
+    select(-nativity)
+  
+
+
+# excel
+title <- "Table W-2. US National: Characteristics of Renter Households by Household Income: 2019"  
+sources <- "Sources: JCHS tabulation of US Census Bureau, 2019 American Community Survey 1-Year Estimates."
+
+#these commands load in the target workbook, tell the program where to paste each component, then writes the tables into the workbook
+wb <- loadWorkbook("excelExport2019appendix2.xlsx") #loads in an existing workbook with template pasted in to a sheet called "RenterCharacteristicsByIncome"
+
+writeData(wb, sheet = "W-2", x = income, 
+          startCol = 2, startRow = 7, colNames = FALSE)  
+writeData(wb, sheet = "W-2", x = incomeP, 
+          startCol = 8, startRow = 7, colNames = FALSE)  
+writeData(wb, sheet = "W-2", x = age_income_fulltable, 
+          startCol = 2, startRow = 9, colNames = FALSE) 
+writeData(wb, sheet = "W-2", x = race_income_fulltable, 
+          startCol = 2, startRow = 17, colNames = FALSE)  
+writeData(wb, sheet = "W-2", x = householdtype_income_fulltable, 
+          startCol = 2, startRow = 23, colNames = FALSE)  
+writeData(wb, sheet = "W-2", x = nativity_income_fulltable, 
+          startCol = 2, startRow = 30, colNames = FALSE)  
+
+saveWorkbook(wb, "excelExport2019appendix2.xlsx", overwrite=TRUE)
