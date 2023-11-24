@@ -1,0 +1,475 @@
+
+# Load packages 
+library(tidyverse)
+library(data.table)
+library(openxlsx)
+library(tidyquant)
+library(dint)
+library(pracma) 
+
+# Import the data
+setwd("C://Users//abbyy//OneDrive//Desktop//Research JCHC//")
+path <- "C://Users//abbyy//OneDrive//Desktop//Research JCHC//"
+multiyear <- fread(file.path(path, "ACS_multiyear_hhplus_RentersPlusVacant.csv")) #this reads in the multiyear file
+
+# set parameters
+currentyear <- 2021 # not necessary for this code - this helps pull inflation factors and creating an equation to inflate income to 2021 dollars
+years <-c(2019) #used for recent years not in multi file, excludes 2020, you can just set this to c(2019, 2021) for now since you don't have the other files
+
+# run person-level file 
+p11a <- fread("C://Users//abbyy//OneDrive//Desktop//Research JCHC//csv_pus//ss11pusa.csv")
+p11b <- fread("C://Users//abbyy//OneDrive//Desktop//Research JCHC//csv_pus//ss11pusb.csv")
+p11 <- rbind(p11a, p11b)
+rm(p11a, p11b)
+
+p11_kids <- p11 %>%
+  rename_all(tolower) %>%
+  group_by(serialno) %>%
+  mutate(kid = if_else(agep<18 & (relp==2 | relp==3), 1, 0),
+         hh_kid_count = sum(kid)) %>% 
+  filter(sporder==1) %>%
+  select(serialno, hh_kid_count)
+
+p1 <- fread("C://Users//abbyy//OneDrive//Desktop//Research JCHC//csv_pus//ss01pus.csv")
+
+p1_kids <- p1 %>%
+  rename_all(tolower) %>%
+  group_by(serialno) %>%
+  mutate(kid = if_else(agep<18 & (rel == 2), 1, 0),
+         hh_kid_count = sum(kid)) %>% 
+  filter(sporder==1) %>%
+  select(serialno, hh_kid_count)
+
+p19a <- fread("C://Users//abbyy//OneDrive//Desktop//Research JCHC//csv_pus (1)//psam_pusa.csv")
+p19b <- fread("C://Users//abbyy//OneDrive//Desktop//Research JCHC//csv_pus (1)//psam_pusb.csv")
+p19 <- rbind(p19a, p19b)
+rm(p19a, p19b)
+
+p19_kids <- p19 %>%
+  rename_all(., .funs = tolower) %>%
+  group_by(serialno) %>%
+  mutate(kid = if_else(agep<18, 1, 0),
+         kid = if_else(agep<18 & (relp==2 | relp==3), 1, 0),
+         hh_kid_count = sum(kid)) %>% 
+  filter(sporder==1) %>%
+  select(serialno, hh_kid_count)
+
+
+# this runs 'fread' for every year - defines what files R pulls from working directly 
+for(x in years) 
+{inputfile <- paste0("ACS_", x, "_hhplus.csv")
+df <- fread(file.path(inputfile))
+dfyr <- paste0("df_", x)
+assign(dfyr, df)
+rm(df)
+}
+
+# add new variable that are needed in dataset to simplify code (this doesn't apply for the function though)
+multiyear <- multiyear %>% 
+  mutate(age = case_when(
+    agep < 25 ~ "1 Under 25",
+    agep >= 25 & agep <= 44 ~ "2 25-44",
+    agep >= 45 & agep <= 64 ~ "3 45-64",
+    agep >= 65 ~ "4 65 and Over"),
+    race5cat = case_when(rac1p == 1 & hisp == 1 ~ 1,
+                         rac1p == 2 & hisp == 1 ~ 2,
+                         hisp > 1 ~ 3,
+                         rac1p == 6 & hisp == 1 ~ 4,
+                         (rac1p == 3 | rac1p == 4 | rac1p == 5 | rac1p == 7 | rac1p == 8 | rac1p == 9) & hisp == 1 ~ 5),
+    race5cat = case_when(race5cat == 1 ~ "1 White",
+                         race5cat == 2 ~ "2 Black",
+                         race5cat == 3 ~ "3 Hispanic", 
+                         race5cat == 5 | race5cat == 4 ~ "4 Asian or Another Race"),
+    hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                hincp >= 75000 ~ "5 $75,000 or More"),
+    ed2cat = case_when(schl > 0 & schl <= 15 ~ 1,
+                       schl == 16 | schl == 17 ~ 2,
+                       schl >= 18 & schl <= 20 ~ 3
+                       schl >= 21 & schl <= 24 ~ 4),
+    ed2cat = case_when(schl == 1 ~ "1 No High School Degree",
+                       schl == 2 ~ "2 HS Diploma or GED",
+                       schl == 3 ~ "3 Some College",
+                       schl == 4 ~ "4 Bachelor's Degree or Higher"),
+    education = case_when(schl <= 15 ~ 1,
+                         (schl == 16 | schl == 17) ~ 2,
+                         (schl == 18 | schl == 19 | schl == 20) ~ 3,
+                         (schl >= 21) ~ 4),
+    education = case_when(schl == 1 ~ "1 No High School Degree",
+                         schl == 2 ~ "2 High School Degree",
+                         schl == 3 ~ "3 Some College", 
+                         schl == 4 ~ "4 Bachelor's Degree or Higher"))
+
+
+# create row with data for all renter households -(created only b/c there is separation between this and other rows)
+# 2001 and 2011  
+multtab_all <- multiyear %>%
+    filter(sporder==1 & tensimp==2) %>% 
+    group_by(year, cost_burden) %>%
+    summarise(tot = sum(wgtp)/1000) %>%
+    ungroup %>% 
+    group_by(year) %>% 
+    mutate(share = tot/sum(tot)*100) %>% 
+    pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+    mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+    rename("ModBurden" = tot_2,
+           "SevBurden" = tot_3) %>% 
+    select(year, "ModBurden", "SevBurden", all_renters) %>%
+  filter(year == 2001 | year == 2011) %>%
+  pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters)) 
+
+
+# 2019
+yearly_tabs_all <- function(x) {
+  df <- paste0("df_", x)
+  df <- get(df)
+  tab <- df %>% 
+    filter(sporder==1 & tensimp==2) %>% 
+    group_by(year, cost_burden) %>%
+    summarise(tot = sum(wgtp)/1000) %>%
+    ungroup %>% 
+    group_by(year) %>% 
+    mutate(share = tot/sum(tot)*100) %>% 
+    pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+    mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+    rename("ModBurden" = tot_2,
+           "SevBurden" = tot_3) %>% 
+    select(year, "ModBurden", "SevBurden", all_renters) %>%
+    pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters)) %>%
+    ungroup
+}
+
+# run the functions
+tabslist_all_recent <- map(years, yearly_tabs_all)
+tabs_recent <- bind_rows(tabslist_all_recent) 
+
+# combine multiyear + recent data
+all_households_age = cbind(multtab_all, tabs_age_total) %>% # used 'cbind' since there is no common variable
+  select(ends_with("2001"), ends_with("2011"), ends_with("2019"))
+
+
+# AGE data for years 2001 and 2011
+multtab_age <- multiyear %>% 
+  filter(sporder==1 & tensimp==2) %>% 
+  group_by(year, cost_burden, age) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  ungroup %>% 
+  group_by(year, age) %>% 
+  mutate(share = tot/sum(tot)*100) %>% 
+  pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+  mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+  rename("ModBurden" = tot_2,
+         "SevBurden" = tot_3) %>% 
+  select(year, "ModBurden", "SevBurden", all_renters) %>%
+  filter(year == 2001 | year == 2011) %>%
+  pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters))
+
+ 
+# age data for 2019 
+yearly_tabs_age <- function(x) {
+  df <- paste0("df_", x)
+  df <- get(df)
+  tab <- df %>% 
+    filter(sporder==1 & tensimp==2) %>% 
+    mutate(age = case_when(
+      agep < 25 ~ "1 Under 25",
+      agep >= 25 & agep <= 44 ~ "2 25-44",
+      agep >= 45 & agep <= 64 ~ "3 45-64",
+      agep >= 65 ~ "4 65 and Over")) %>%
+    group_by(year, cost_burden, age) %>% 
+    summarise(tot = sum(wgtp)/1000) %>%
+    ungroup %>% 
+    group_by(year, age) %>% 
+    mutate(share = tot/sum(tot)*100) %>% 
+    pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+    mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+    rename("ModBurden" = tot_2,
+           "SevBurden" = tot_3) %>% 
+    select(year, "ModBurden", "SevBurden", all_renters) %>%
+    pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters)) %>%
+    ungroup
+}
+
+# run functions
+tabslist_age <- map(years, yearly_tabs_age)
+tabs_age <- bind_rows(tabslist_age)
+
+
+# combine age data for all years
+burden_age = left_join(multtab_age, tabs_age, by = c("age")) %>%
+  select(ends_with("2001"), ends_with("2011"), ends_with("2019")) %>%
+  select(-age)
+
+
+# RACE data for years 2001 and 2011
+multtab_race <- multiyear %>% 
+  filter(sporder==1 & tensimp==2) %>% 
+  group_by(year, cost_burden, race5cat) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  ungroup %>% 
+  group_by(year, race5cat) %>% 
+  mutate(share = tot/sum(tot)*100) %>% 
+  pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+  mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+  rename("ModBurden" = tot_2,
+         "SevBurden" = tot_3) %>% 
+  select(year, "ModBurden", "SevBurden", all_renters) %>%
+  filter(year == 2001 | year == 2011) %>%
+  pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters))
+
+# race data for 2019 
+yearly_tabs_race <- function(x) {
+  df <- paste0("df_", x)
+  df <- get(df)
+  tab <- df %>% 
+    filter(sporder==1 & tensimp==2) %>% 
+    mutate(race5cat = case_when(rac1p == 1 & hisp == 1 ~ 1,
+                                    rac1p == 2 & hisp == 1 ~ 2,
+                                    hisp > 1 ~ 3,
+                                    rac1p == 6 & hisp == 1 ~ 4,
+                                    (rac1p == 3 | rac1p == 4 | rac1p == 5 | rac1p == 7 | rac1p == 8 | rac1p == 9) & hisp == 1 ~ 5),
+               race5cat = case_when(race5cat == 1 ~ "1 White",
+                                    race5cat == 2 ~ "2 Black",
+                                    race5cat == 3 ~ "3 Hispanic", 
+                                    race5cat == 5 | race5cat == 4 ~ "4 Asian or Another Race")) %>%
+    group_by(year, cost_burden, race5cat) %>% 
+    summarise(tot = sum(wgtp)/1000) %>%
+    ungroup %>% 
+    group_by(year, race5cat) %>% 
+    mutate(share = tot/sum(tot)*100) %>% 
+    pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+    mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+    rename("ModBurden" = tot_2,
+           "SevBurden" = tot_3) %>% 
+    select(year, "ModBurden", "SevBurden", all_renters) %>%
+    pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters)) %>%
+    ungroup
+}
+
+# run functions
+tabslist_race <- map(years, yearly_tabs_race)
+tabs_race <- bind_rows(tabslist_race)
+
+
+# combine race data for all years
+burden_race = left_join(multtab_race, tabs_race, by = c("race5cat")) %>%
+  select(ends_with("2001"), ends_with("2011"), ends_with("2019")) %>%
+  select(-race5cat)
+
+
+# HOUSEHOLD  TYPE data for years 2001 and 2011
+multtab_hhtype <- multiyear %>% 
+  filter(sporder==1 & tensimp==2) %>% 
+  filter(year == 2001 | year == 2011) %>% 
+  left_join(p11_kids, by="serialno") %>%
+  mutate(hhtype = case_when(hht==1 & hh_kid_count==0 ~ "1 Married no kids",
+                            hht == 1 & hh_kid_count > 0 ~ "2 Married w kids",
+                            (hht == 2 | hht == 3) & hh_kid_count > 0 ~ "3 Single parent",
+                            hht>=1 & hht<=3 ~ "4 Other fam",
+                            hht == 4 | hht == 6 ~ "5 Single person",
+                            hht == 5 | hht == 7 ~ "6 Other nonfam")) %>%
+  group_by(year, cost_burden, hhtype) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  ungroup %>% 
+  group_by(year, hhtype) %>% 
+  mutate(share = tot/sum(tot)*100) %>% 
+  pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+  mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+  rename("ModBurden" = tot_2,
+         "SevBurden" = tot_3) %>% 
+  select(year, "ModBurden", "SevBurden", all_renters) %>%
+  pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters))
+
+
+
+# hhtype data for 2019 
+yearly_tabs_householdtype <- function(x) {
+  df <- paste0("df_", x)
+  df <- get(df)
+  tab <- df %>% 
+    filter(sporder==1 & tensimp==2) %>% 
+    mutate(householdtype = case_when(hhtype == 1 ~ "1 Married, no Children",
+                                     hhtype == 2 ~ "2 Married with Children",
+                                     hhtype == 3 ~ "3 Single Parent",
+                                     hhtype == 4 ~ "4 Other Family",
+                                     hhtype == 5 ~ "5 Single Person",
+                                     hhtype == 6 ~ "6 Other non-family")) %>%
+    group_by(year, cost_burden, hoseholdtype) %>% 
+    summarise(tot = sum(wgtp)/1000) %>%
+    ungroup %>% 
+    group_by(year, hoseholdtype) %>% 
+    mutate(share = tot/sum(tot)*100) %>% 
+    pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+    mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+    rename("ModBurden" = tot_2,
+           "SevBurden" = tot_3) %>% 
+    select(year, "ModBurden", "SevBurden", all_renters) %>%
+    pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters)) %>%
+    ungroup
+}
+
+# run functions
+tabslist_householdtype <- map(years, yearly_tabs_householdtype)
+tabs_householdtype <- bind_rows(tabslist_householdtype)
+
+
+# combine data for all years
+burden_householdtype = left_join(multtab_householdtype, tabs_householdtype, by = "householdtype") %>%
+  select(ends_with("2001"), ends_with("2011"), ends_with("2019")) %>%
+  select(-householdtype)
+
+# ERRROR - values aren't lining up, and the 2019 data isn't generating
+
+# HOUSEHOLD  INCOME data for years 2001 and 2011
+multtab_hhincome <- multiyear %>% 
+  filter(sporder==1 & tensimp==2) %>% 
+  group_by(year, cost_burden, hhincome) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  ungroup %>% 
+  group_by(year, hhincome) %>% 
+  mutate(share = tot/sum(tot)*100) %>% 
+  pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+  mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+  rename("ModBurden" = tot_2,
+         "SevBurden" = tot_3) %>% 
+  select(year, "ModBurden", "SevBurden", all_renters) %>%
+  filter(year == 2001 | year == 2011) %>%
+  pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters))
+
+# hhtype data for 2019 
+yearly_tabs_hhincome <- function(x) {
+  df <- paste0("df_", x)
+  df <- get(df)
+  tab <- df %>% 
+    filter(sporder==1 & tensimp==2) %>% 
+    mutate(hhincome = case_when(hincp < 15000 ~ "1 Less than $15,000",
+                                     hincp >= 15000 & hincp <=29999 ~ "2 $15,000-29,999",
+                                     hincp >= 30000 & hincp <=44999 ~ "3 $30,000-44,999",
+                                     hincp >= 45000 & hincp <=74999 ~ "4 $45,000-74,999",
+                                     hincp >= 75000 ~ "5 $75,000 or More")) %>%
+    group_by(year, cost_burden, hhincome) %>% 
+    summarise(tot = sum(wgtp)/1000) %>%
+    ungroup %>% 
+    group_by(year, hhincome) %>% 
+    mutate(share = tot/sum(tot)*100) %>% 
+    pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+    mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+    rename("ModBurden" = tot_2,
+           "SevBurden" = tot_3) %>% 
+    select(year, "ModBurden", "SevBurden", all_renters) %>%
+    pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters)) %>%
+    ungroup
+}
+ 
+tabslist_hhincome <- map(years, yearly_tabs_hhincome)
+tabs_hhincome <- bind_rows(tabslist_hhincome)
+
+
+# combine data for all years
+burden_hhincome = left_join(multtab_hhincome, tabs_hhincome, by = "hhincome") %>%
+  select(ends_with("2001"), ends_with("2011"), ends_with("2019")) %>%
+  select(-hhincome)
+
+# education data for years 2001 and 2011
+multtab_education <- multiyear %>% 
+  filter(sporder==1 & tensimp==2) %>% 
+  group_by(year, cost_burden, ed2cat) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  ungroup %>% 
+  group_by(year, ed2cat) %>% 
+  mutate(share = tot/sum(tot)*100) %>% 
+  pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+  mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+  rename("ModBurden" = tot_2,
+         "SevBurden" = tot_3) %>% 
+  select(year, "ModBurden", "SevBurden", all_renters) %>%
+  filter(year == 2001 | year == 2011) %>%
+  pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters))
+
+# education data for 2019 
+yearly_tabs_education <- function(x) {
+  df <- paste0("df_", x)
+  df <- get(df)
+  tab <- df %>% 
+    filter(sporder==1 & tensimp==2) %>% 
+    mutate(ed2cat = case_when(schl <= 15 ~ 1,
+                              (schl == 16 | schl == 17) ~ 2,
+                              (schl == 18 | schl == 19 | schl == 20) ~ 3,
+                              (schl >= 21) ~ 4),
+           education = case_when(schl == 1 ~ "1 No High School Degree",
+                                 schl == 2 ~ "2 High School Degree",
+                                 schl == 3 ~ "3 Some College", 
+                                 schl == 4 ~ "4 Bachelor's Degree or Higher")) %>%
+    group_by(year, cost_burden, ed2cat) %>% 
+    summarise(tot = sum(wgtp)/1000) %>%
+    ungroup %>% 
+    group_by(year, ed2cat) %>% 
+    mutate(share = tot/sum(tot)*100) %>% 
+    pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+    mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+    rename("ModBurden" = tot_2,
+           "SevBurden" = tot_3) %>% 
+    select(year, "ModBurden", "SevBurden", all_renters) %>%
+    pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters)) %>%
+    ungroup
+}
+
+tabslist_education <- map(years, yearly_tabs_education)
+tabs_education <- bind_rows(tabslist_education)
+
+
+# combine data for all years
+burden_education = left_join(multtab_education, tabs_education, by = "ed2cat") %>%
+  select(ends_with("2001"), ends_with("2011"), ends_with("2019")) %>%
+  select(-ed2cat)
+
+
+
+# working data for years 2001 and 2011
+multtab_working <- multiyear %>% 
+  filter(sporder==1 & tensimp==2) %>% 
+  group_by(year, cost_burden, emp12) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  ungroup %>% 
+  group_by(year, emp12) %>% 
+  mutate(share = tot/sum(tot)*100) %>% 
+  pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+  mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+  rename("ModBurden" = tot_2,
+         "SevBurden" = tot_3) %>% 
+  select(year, "ModBurden", "SevBurden", all_renters) %>%
+  filter(year == 2001 | year == 2011) %>%
+  pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters))
+
+# working data for 2019 
+# NOTE: THIS USED MORE RECENT CODE VARIABLE NAMES FROM 2021 CODE BOOK
+yearly_tabs_working <- function(x) {
+  df <- paste0("df_", x)
+  df <- get(df)
+  tab <- df %>% 
+    filter(sporder==1 & tensimp==2) %>% 
+    group_by(year, cost_burden, emp12) %>% 
+    summarise(tot = sum(wgtp)/1000) %>%
+    ungroup %>% 
+    group_by(year, emp12) %>% 
+    mutate(share = tot/sum(tot)*100) %>% 
+    pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+    mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+    rename("ModBurden" = tot_2,
+           "SevBurden" = tot_3) %>% 
+    select(year, "ModBurden", "SevBurden", all_renters) %>%
+    pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters)) %>%
+    ungroup
+}
+
+tabslist_working <- map(years, yearly_tabs_working)
+tabs_working <- bind_rows(tabslist_working)
+
+
+# combine data for all years
+burden_working = left_join(multtab_working, tabs_working, by = "emp12") %>%
+  select(ends_with("2001"), ends_with("2011"), ends_with("2019")) 
+
+burden_working$emp12 <- NULL
