@@ -1,0 +1,157 @@
+# Load packages 
+library(tidyverse)
+library(data.table)
+library(openxlsx)
+library(tidyquant)
+library(dint)
+library(pracma) 
+
+setwd("C://Users//abbyy//OneDrive//Desktop//Research JCHC//")
+# sometimes you have to do two back slashes (//), take out file name
+path <- "C://Users//abbyy//OneDrive//Desktop//Research JCHC//"
+multiyear <- fread(file.path(path, "ACS_multiyear_hhplus_RentersPlusVacant.csv")) #this reads in the multiyear file
+
+
+# Import the data; useful code: fread() is quicker than "read_csv"
+ACS_2019_hhplus <- fread("ACS_2019_hhplus.csv")
+
+years <-c(2019) #used for recent years not in multi file, excludes 2020, you can just set this to c(2019, 2021) for now since you don't have the other files
+
+# this runs 'fread' for every year - defines what files R pulls from working directly 
+for(x in years) 
+{inputfile <- paste0("ACS_", x, "_hhplus.csv")
+df <- fread(file.path(inputfile))
+dfyr <- paste0("df_", x)
+assign(dfyr, df)
+rm(df)
+}
+
+
+# extract 2009 data - code for states
+
+multtab_states <- multiyear %>% 
+  filter(sporder==1 & tensimp==2) %>% 
+  mutate_at(vars(c(cost_burden, st, year)),list(~as.character(.))) %>% #preserves row for all hhs
+  bind_rows(mutate(., st= "")) %>%
+  group_by(year, cost_burden, st) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  ungroup %>% 
+  group_by(year, st) %>% 
+  mutate(share = tot/sum(tot)*100) %>% 
+  filter(cost_burden==2|cost_burden==3) %>% 
+  pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+  mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+  rename("ModBurden" = tot_2,
+         "SevBurden" = tot_3) %>% 
+  select(year, "ModBurden", "SevBurden", all_renters) %>%
+  filter(year == 2009) %>%
+  pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden"))
+
+
+multtab_age <- multiyear %>% 
+  filter(sporder==1 & tensimp==2) %>% 
+  group_by(year, cost_burden, age) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  ungroup %>% 
+  group_by(year, age) %>% 
+  mutate(share = tot/sum(tot)*100) %>% 
+  pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+  mutate(all_renters = tot_1 + tot_2 + tot_3) %>%
+  rename("ModBurden" = tot_2,
+         "SevBurden" = tot_3) %>% 
+  select(year, "ModBurden", "SevBurden", all_renters) %>%
+  filter(year == 2001 | year == 2011) %>%
+  pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden", all_renters))
+
+
+# column including data for all renter households
+
+multtab_all <- multiyear %>% 
+  filter(sporder==1 & tensimp==2) %>% 
+  mutate_at(vars(c(cost_burden, st, year)),list(~as.character(.))) %>% #preserves row for all hhs
+  bind_rows(mutate(., st= "")) %>%
+  group_by(year, st) %>% 
+  summarise(tot = sum(wgtp)/1000) %>%
+  filter(year == 2009) %>%
+  pivot_wider(names_from=year, values_from=c(tot))
+
+
+# extract 2019 data - code for states
+yearly_tabs_states <- function(x) {
+  df <- paste0("df_", x)
+  df <- get(df)
+  tab <- df %>% 
+    filter(sporder==1 & tensimp==2) %>% 
+    mutate_at(vars(c(cost_burden, st, year)),list(~as.character(.))) %>% #preserves row for all hhs
+    bind_rows(mutate(., st= "")) %>%
+    group_by(year, cost_burden, st) %>% 
+    summarise(tot = sum(wgtp)/1000) %>%
+    ungroup %>% 
+    group_by(year, st) %>% 
+    mutate(share = tot/sum(tot)*100) %>% 
+    filter(cost_burden==2|cost_burden==3) %>% 
+    pivot_wider(names_from=cost_burden, values_from=c(tot, share)) %>% 
+    rename("ModBurden" = tot_2,
+           "SevBurden" = tot_3) %>% 
+    select(year, "ModBurden", "SevBurden") %>%
+    pivot_wider(names_from=year, values_from=c("ModBurden", "SevBurden"))
+  ungroup
+}
+
+# extract 2019 data - code for states
+yearly_tabs_states_all <- function(x) {
+  df <- paste0("df_", x)
+  df <- get(df)
+  tab <- df %>% 
+    filter(sporder==1 & tensimp==2) %>% 
+    mutate_at(vars(c(cost_burden, st, year)),list(~as.character(.))) %>% #preserves row for all hhs
+    bind_rows(mutate(., st= "")) %>%
+    group_by(year, st) %>% 
+    summarise(tot = sum(wgtp)/1000) %>%
+    filter(year == 2009) %>%
+    pivot_wider(names_from=year, values_from=c(tot))
+  ungroup
+}
+
+
+tabslist_states<- map(years, yearly_tabs_states) #this is what actually runs the function. for every year you define, run this function. it's telling it to use the yearly_tabs function
+#it will put the years specified where there is an x in the function - so for 2019 it will make a dummy object name df_2019 then the get function
+# try "tabslist[[1]]" to look at data for 2019
+#pulls the actual object (the df_2019 dataframe), renames it df, and runs the rest of the calculation
+
+tabs_states <- bind_rows(tabslist_states) #the above map function results in a list - this makes the list into a usable table by binding the rows together
+
+# R says that there's an error! for line 105 / 'tabs_states'
+
+
+tabslist_states_all<- map(years, yearly_tabs_states_all) 
+tabs_states_all <- bind_rows(tabslist_states_all) #the above map function results in a list - this makes the list into a usable table by binding the rows together
+
+# CHALLENGE: Combining these data into all one frame - check with Whitney.
+# need to take into account the possiblity of years before 2019 being structured as  modBurden, modBurden, etc. using select(end_with())
+
+# merge data across years for states
+full_table = reduce(list(multtab_states, multtab_all, tabs_states, tabs_states_all), left_join, by = "st") %>%
+  select(-st)
+
+
+
+
+# excel
+title <- "Table W-16. US States: Share of Housing Cost-Burdened Renters: 2009–2019"  
+sources <- "Sources: JCHS tabulation of US Census Bureau, 2019 American Community Survey 1-Year Estimates."
+
+#these commands load in the target workbook, tell the program where to paste each component, then writes the tables into the workbook
+wb <- loadWorkbook("excelExport2019appendix2.xlsx") #loads in an existing workbook with template pasted in to a sheet called "RenterCharacteristicsByIncome"
+
+writeData(wb, sheet = "W-16", x = states_full_table, 
+          startCol = 2, startRow = 7, colNames = FALSE)  
+writeData(wb, sheet = "W-16", x = race, 
+          startCol = 9, startRow = 7, colNames = FALSE)  
+writeData(wb, sheet = "W-16", x = income, 
+          startCol = 15, startRow = 7, colNames = FALSE)  
+
+writeData(wb, sheet = "W-2", x = states_full_table, 
+          startCol = 2, startRow = 8, colNames = FALSE)  
+
+saveWorkbook(wb, "excelExport2019appendix2.xlsx", overwrite=TRUE)
